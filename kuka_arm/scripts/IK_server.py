@@ -21,7 +21,10 @@ import numpy as np
 
 
 def clip_angle(theta, lower, upper):
-    return np.clip(theta, radians(lower), radians(upper))
+    try:
+        return np.clip(theta, radians(lower), radians(upper))
+    except:
+        print("imaginary numbers")
 
 def handle_calculate_IK(req):
     rospy.loginfo("Received %s eef-poses from the plan" % len(req.poses))
@@ -144,21 +147,21 @@ def handle_calculate_IK(req):
             
             # Euler angles from rotation matrix
             theta5 = atan2(sqrt(R3_6[0,2]**2 + R3_6[2,2]**2), R3_6[1,2])
-            # Choosing between multiple possible solutions:
-            if sin(theta5) < 0:
-                theta4 = atan2(-R3_6[2,2], R3_6[0,2])
-                theta6 = atan2(R3_6[1,1], -R3_6[1,0])
-            else:
+            if sin(theta5) == 0:
                 theta4 = atan2(R3_6[2,2], -R3_6[0,2])
                 theta6 = atan2(-R3_6[1,1], R3_6[1,0])
-            
+            else:
+                theta4 = atan2(-R3_6[2,2], R3_6[0,2])
+                theta6 = atan2(R3_6[1,1], -R3_6[1,0])
+            # Choosing between multiple possible solutions:
+
+            # Angle limits
             theta1 = clip_angle(theta1, -185, 185)
             theta2 = clip_angle(theta2, -45, 85)
             theta3 = clip_angle(theta3, -210, 65)
             theta4 = clip_angle(theta4, -350, 350)
             theta5 = clip_angle(theta5, -125, 125)
             theta6 = clip_angle(theta6, -350, 350)
-
             ###
 
 
