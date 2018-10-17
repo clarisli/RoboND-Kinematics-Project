@@ -21,10 +21,32 @@ import numpy as np
 
 
 def clip_angle(theta, lower, upper):
-    try:
-        return np.clip(theta, radians(lower), radians(upper))
-    except:
-        print("imaginary numbers")
+    return np.clip(theta, radians(lower), radians(upper))
+
+def DH_TF_Matrix(alpha, a, d, q):
+    T = Matrix([[            cos(q),           -sin(q),           0,             a],
+                [ sin(q)*cos(alpha), cos(q)*cos(alpha), -sin(alpha), -sin(alpha)*d],
+                [ sin(q)*sin(alpha), cos(q)*sin(alpha),  cos(alpha),  cos(alpha)*d],
+                [                 0,                 0,           0,             1]])
+    return T
+
+def rot_x(q):
+    R_x = Matrix([[      1,        0,        0],
+                  [      0,   cos(q),  -sin(q)],
+                  [      0,   sin(q),  cos(q)]])
+    return R_x
+        
+def rot_y(q):              
+    R_y = Matrix([[ cos(q),        0,  sin(q)],
+                  [      0,        1,       0],
+                  [-sin(q),        0, cos(q)]]) 
+    return R_y
+
+def rot_z(q):    
+    R_z = Matrix([[ cos(q),  -sin(q),       0],
+                  [  sin(q),   cos(q),       0],
+                  [       0,        0,      1]])
+    return R_z
 
 def handle_calculate_IK(req):
     rospy.loginfo("Received %s eef-poses from the plan" % len(req.poses))
@@ -50,14 +72,6 @@ def handle_calculate_IK(req):
                      alpha5: radians(-90),  a5:      0, d6:       0,
                      alpha6:            0,  a6:      0, d7:   0.303}
 
-        # Define Modified DH Transformation matrix
-        def DH_TF_Matrix(alpha, a, d, q):
-            T = Matrix([[            cos(q),           -sin(q),           0,             a],
-                        [ sin(q)*cos(alpha), cos(q)*cos(alpha), -sin(alpha), -sin(alpha)*d],
-                        [ sin(q)*sin(alpha), cos(q)*sin(alpha),  cos(alpha),  cos(alpha)*d],
-                        [                 0,                 0,           0,             1]])
-            return T
-
         # Create individual transformation matrices
         T0_1 = DH_TF_Matrix(alpha0, a0, d1, q1).subs(DH_table)
         T1_2 = DH_TF_Matrix(alpha1, a1, d2, q2).subs(DH_table)
@@ -67,28 +81,15 @@ def handle_calculate_IK(req):
         T5_6 = DH_TF_Matrix(alpha5, a5, d6, q6).subs(DH_table)
         T6_EE = DH_TF_Matrix(alpha6, a6, d7, q7).subs(DH_table)
         
-        T0_EE = T0_1*T1_2*T2_3*T3_4*T4_5*T5_6*T6_EE
+        T0_2 = (T0_1 * T1_2)
+        T0_3 = (T0_2 * T2_3)
+        T0_4 = (T0_3 * T3_4)
+        T0_5 = (T0_4 * T4_5)
+        T0_6 = (T0_5 * T5_6)
+        T0_EE = (T0_6 * T6_EE)
 
         # Correction Needed to Account of Orientation Difference Between Definition of
-        # Gripper Link in URDF versus DH Convention
-        def rot_x(q):
-            R_x = Matrix([[      1,        0,        0],
-                          [      0,   cos(q),  -sin(q)],
-                          [      0,   sin(q),  cos(q)]])
-            return R_x
-        
-        def rot_y(q):              
-            R_y = Matrix([[ cos(q),        0,  sin(q)],
-                          [      0,        1,       0],
-                          [-sin(q),        0, cos(q)]]) 
-            return R_y
-
-        def rot_z(q):    
-            R_z = Matrix([[ cos(q),  -sin(q),       0],
-                          [  sin(q),   cos(q),       0],
-                          [       0,        0,      1]])
-            return R_z
-            
+        # Gripper Link in URDF versus DH Convention     
         r, p, y = symbols('r p y')
         R_corr = rot_z(y).subs(y, radians(180))*rot_y(p).subs(p, radians(-90))
         
@@ -104,9 +105,9 @@ def handle_calculate_IK(req):
             # IK code starts here
             joint_trajectory_point = JointTrajectoryPoint()
 
-    	    # Extract end-effector position and orientation from request
-    	    # px,py,pz = end-effector position
-    	    # roll, pitch, yaw = end-effector orientation
+            # Extract end-effector position and orientation from request
+            # px,py,pz = end-effector position
+            # roll, pitch, yaw = end-effector orientation
             px = req.poses[x].position.x
             py = req.poses[x].position.y
             pz = req.poses[x].position.z
@@ -116,7 +117,7 @@ def handle_calculate_IK(req):
                     req.poses[x].orientation.z, req.poses[x].orientation.w])
 
             ### IK code here
-	        # Compensate for rotation discrepancy between DH parameters and Gazebo
+            # Compensate for rotation discrepancy between DH parameters and Gazebo
             R_EE = R_EE.subs({'r': roll, 'p': pitch, 'y': yaw})
             EE = Matrix([[px],
                          [py],
@@ -127,15 +128,19 @@ def handle_calculate_IK(req):
             theta1 = atan2(WC[1], WC[0])
 
             # SSS triangle for theta2 and theta3
-            side_a = sqrt(DH_table[d4]*DH_table[d4] + DH_table[a3]*DH_table[a3])        
+            side_a = 1.50097169 # sqrt(DH_table[d4]*DH_table[d4] + DH_table[a3]*DH_table[a3])        
+            side_a_squared = 2.252916
             r = sqrt(WC[0]*WC[0] + WC[1]*WC[1]) - DH_table[a1]
             s = WC[2] - DH_table[d1]            
             side_b = sqrt(r*r + s*s)
-            side_c = DH_table[a2]
+            side_c = 1.25 # DH_table[a2]
+            side_c_squared = 1.5625
+            two_side_a_times_c = 3.75242923 # 2*side_c*side_a
 
-            angle_a = acos((side_b*side_b + side_c*side_c - side_a*side_a)/(2*side_b*side_c))
-            angle_b = acos((side_c*side_c + side_a*side_a - side_b*side_b)/(2*side_c*side_a))
-                    
+            cos_angle_a = np.clip((side_b*side_b + side_c_squared - side_a_squared)/(2*side_b*side_c), -1, 1)
+            cos_angle_b = np.clip((side_c_squared + side_a_squared - side_b*side_b)/(two_side_a_times_c), -1, 1)
+            angle_a = acos(cos_angle_a)
+            angle_b = acos(cos_angle_b)
             theta2 = radians(90) - angle_a - atan2(s, r)
             theta3 = radians(90) - angle_b - atan2(DH_table[a3], DH_table[d4])
 
@@ -145,15 +150,13 @@ def handle_calculate_IK(req):
 
             R3_6 = R0_3.transpose()*R_EE
             
-            # Euler angles from rotation matrix
             theta5 = atan2(sqrt(R3_6[0,2]**2 + R3_6[2,2]**2), R3_6[1,2])
-            if sin(theta5) == 0:
-                theta4 = atan2(R3_6[2,2], -R3_6[0,2])
-                theta6 = atan2(-R3_6[1,1], R3_6[1,0])
-            else:
+            if (theta5 > pi) :
                 theta4 = atan2(-R3_6[2,2], R3_6[0,2])
-                theta6 = atan2(R3_6[1,1], -R3_6[1,0])
-            # Choosing between multiple possible solutions:
+                theta6 = atan2(R3_6[1,1],-R3_6[1,0])
+            else:
+                theta4 = atan2(R3_6[2,2], -R3_6[0,2])
+                theta6 = atan2(-R3_6[1,1],R3_6[1,0])
 
             # Angle limits
             theta1 = clip_angle(theta1, -185, 185)
@@ -162,13 +165,13 @@ def handle_calculate_IK(req):
             theta4 = clip_angle(theta4, -350, 350)
             theta5 = clip_angle(theta5, -125, 125)
             theta6 = clip_angle(theta6, -350, 350)
-            ###
+            # ###
 
 
             # Populate response for the IK request
             # In the next line replace theta1,theta2...,theta6 by your joint angle variables
-	    joint_trajectory_point.positions = [theta1, theta2, theta3, theta4, theta5, theta6]
-	    joint_trajectory_list.append(joint_trajectory_point)
+        joint_trajectory_point.positions = [theta1, theta2, theta3, theta4, theta5, theta6]
+        joint_trajectory_list.append(joint_trajectory_point)
 
         rospy.loginfo("length of Joint Trajectory List: %s" % len(joint_trajectory_list))
         return CalculateIKResponse(joint_trajectory_list)
